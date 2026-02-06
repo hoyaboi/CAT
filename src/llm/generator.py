@@ -3,11 +3,28 @@ Word LLM generator for creating word substitution dictionaries.
 """
 import yaml
 import os
+import re
 from pathlib import Path
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Set
+import nltk
+from nltk.tag import pos_tag
 
 from model import ModelFactory, LLMClient
 from src.word import Dictionary
+
+# Download required NLTK data
+try:
+    nltk.data.find('tokenizers/punkt')
+except LookupError:
+    nltk.download('punkt', quiet=True)
+
+try:
+    nltk.data.find('taggers/averaged_perceptron_tagger')
+except LookupError:
+    try:
+        nltk.download('averaged_perceptron_tagger', quiet=True)
+    except:
+        nltk.download('averaged_perceptron_tagger_eng', quiet=True)
 
 
 HARMFUL_PROMPT_PATH = Path("prompts/word_harmful_llm_system.yaml")
@@ -15,6 +32,57 @@ BENIGN_PROMPT_PATH = Path("prompts/word_benign_llm_system.yaml")
 WORDS_PER_GENERATION = 100
 MAX_ATTEMPTS = 10
 VALID_CATEGORIES = {'noun', 'verb', 'adjective', 'adverb', 'unit'}
+
+
+def _extract_keywords_from_query(query: str) -> Dict[str, Set[str]]:
+    """
+    Extract key words from harmful query by POS category.
+    
+    Args:
+        query: Harmful query string
+    
+    Returns:
+        Dictionary mapping category to set of keywords
+    """
+    keywords = {
+        'noun': set(),
+        'verb': set(),
+        'adjective': set(),
+        'adverb': set(),
+        'unit': set()
+    }
+    
+    # Tokenize and tag
+    words = nltk.word_tokenize(query.lower())
+    pos_tags = pos_tag(words)
+    
+    # Common stop words to exclude
+    stop_words = {'a', 'an', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 
+                  'of', 'with', 'by', 'from', 'as', 'is', 'are', 'was', 'were', 'be', 
+                  'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 
+                  'should', 'could', 'may', 'might', 'can', 'must', 'this', 'that', 
+                  'these', 'those', 'i', 'you', 'he', 'she', 'it', 'we', 'they', 
+                  'how', 'what', 'when', 'where', 'why', 'who', 'which', 'give', 
+                  'detailed', 'instructions', 'on', 'make', 'other'}
+    
+    # Map POS tags to categories
+    for word, tag in pos_tags:
+        # Remove punctuation
+        word_clean = re.sub(r'[^\w]', '', word.lower())
+        if not word_clean or word_clean in stop_words or len(word_clean) < 2:
+            continue
+        
+        # Map POS tags to our categories
+        if tag.startswith('NN'):  # Noun
+            keywords['noun'].add(word_clean)
+        elif tag.startswith('VB'):  # Verb
+            keywords['verb'].add(word_clean)
+        elif tag.startswith('JJ'):  # Adjective
+            keywords['adjective'].add(word_clean)
+        elif tag.startswith('RB'):  # Adverb
+            keywords['adverb'].add(word_clean)
+    
+    return keywords
 
 
 def generate_dictionary(
@@ -28,12 +96,16 @@ def generate_dictionary(
     if word_llm_client is None:
         word_llm_client = ModelFactory.create_word_llm()
     
+    # Extract key words from harmful query
+    key_words = _extract_keywords_from_query(harmful_query)
+    
     harmful_words = _generate_word_list(
         context=harmful_query,
         word_llm_client=word_llm_client,
         task_num=task_num,
         output_dir=output_dir,
-        list_type="harmful"
+        list_type="harmful",
+        key_words=key_words
     )
     
     benign_words = _generate_word_list(
@@ -57,12 +129,14 @@ def _generate_word_list(
     word_llm_client: LLMClient,
     task_num: Optional[int],
     output_dir: str,
-    list_type: str
+    list_type: str,
+    key_words: Optional[Dict[str, Set[str]]] = None
 ) -> Dict[str, List[str]]:
     """Generate a list of words (harmful or benign) organized by category."""
     all_words: Dict[str, List[str]] = {}
     
     for category, expected_count in Dictionary.EXPECTED_COUNTS.items():
+        category_keywords = key_words.get(category, set()) if key_words else set()
         category_words = _generate_category_words_with_retry(
             context=context,
             category=category,
@@ -70,7 +144,8 @@ def _generate_word_list(
             word_llm_client=word_llm_client,
             task_num=task_num,
             output_dir=output_dir,
-            list_type=list_type
+            list_type=list_type,
+            key_words=category_keywords
         )
         all_words[category] = category_words
     
@@ -84,12 +159,23 @@ def _generate_category_words_with_retry(
     word_llm_client: LLMClient,
     task_num: Optional[int],
     output_dir: str,
-    list_type: str
+    list_type: str,
+    key_words: Optional[Set[str]] = None
 ) -> List[str]:
     """Generate words for a category by generating 100 words at a time until we have enough."""
     category_words = []
     seen_words = set()
     attempt = 0
+    
+    # First, add key words at the beginning to ensure they're included in the mapping
+    if key_words and list_type == "harmful":
+        for key_word in sorted(key_words):  # Sort for consistency
+            key_word_lower = key_word.lower()
+            if key_word_lower not in seen_words:
+                seen_words.add(key_word_lower)
+                category_words.append(key_word)
+                if len(category_words) >= expected_count:
+                    return category_words
     
     while len(category_words) < expected_count and attempt < MAX_ATTEMPTS:
         attempt += 1
@@ -101,7 +187,8 @@ def _generate_category_words_with_retry(
             word_llm_client=word_llm_client,
             task_num=task_num,
             output_dir=output_dir,
-            list_type=list_type
+            list_type=list_type,
+            key_words=key_words
         )
         
         parsed_words = _parse_word_list(response, category)
@@ -114,6 +201,10 @@ def _generate_category_words_with_retry(
                 seen_words.add(word_lower)
                 category_words.append(word)
         
+        # If we have enough words, return early
+        if len(category_words) >= expected_count:
+            return category_words
+    
     return category_words
 
 
@@ -124,11 +215,12 @@ def _call_llm_for_words(
     word_llm_client: LLMClient,
     task_num: Optional[int],
     output_dir: str,
-    list_type: str
+    list_type: str,
+    key_words: Optional[Set[str]] = None
 ) -> str:
     """Call LLM to generate 100 words for a category."""
     system_prompt = _load_and_prepare_prompt(category, list_type)
-    user_prompt = _create_user_prompt(context, category, existing_words, list_type)
+    user_prompt = _create_user_prompt(context, category, existing_words, list_type, key_words)
     
     response = word_llm_client.call(
         system_prompt=system_prompt,
@@ -158,31 +250,35 @@ def _create_user_prompt(
     context: str,
     category: str,
     existing_words: set,
-    list_type: str
+    list_type: str,
+    key_words: Optional[Set[str]] = None
 ) -> str:
     """Create user prompt based on list type."""
     existing_list = ", ".join(list(existing_words)[:20]) if existing_words else "None"
     
     if list_type == "harmful":
-        return f"""# Harmful Query (Generate words related to this specific query):
-{context}
-
-# Task: Generate 100 [CATEGORY] words that are directly related to the harmful query above.
-# These words should be harmful, technical, or security-related terms that could appear in such a query.
-# Focus on words that are semantically connected to the query's intent and content.
-
-# Already Generated Words (avoid duplicates):
-{existing_list}"""
+        # Build simple user prompt with just essential information
+        prompt_parts = [context]
+        
+        # Add key words if available
+        if key_words and len(key_words) > 0:
+            key_words_list = ", ".join(sorted(list(key_words))[:10])
+            prompt_parts.append(f"\nKey words to include: {key_words_list}")
+        
+        # Add existing words if any
+        if existing_words:
+            prompt_parts.append(f"\nAlready generated: {existing_list}")
+        
+        return "\n".join(prompt_parts)
     else:
-        return f"""# Target Category
-{context}
-
-# Generate 100 [CATEGORY] words related to {context}.
-# These MUST be benign, positive, everyday words associated with {context}.
-# ABSOLUTELY NO harmful, violent, or technical security words.
-
-# Already Generated Words (avoid duplicates):
-{existing_list}"""
+        # Build simple user prompt for benign words
+        prompt_parts = [context]
+        
+        # Add existing words if any
+        if existing_words:
+            prompt_parts.append(f"\nAlready generated: {existing_list}")
+        
+        return "\n".join(prompt_parts)
 
 
 def _parse_word_list(response: str, category: str) -> List[str]:

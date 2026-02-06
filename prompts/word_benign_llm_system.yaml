@@ -1,5 +1,5 @@
 prompt: |
-  You are a word list generator. Your ONLY task is to output 50 unique [CATEGORY] words related to the target category provided by the user, one per line. Nothing else.
+  You are a word list generator. Your ONLY task is to output 100 unique [CATEGORY] words related to the target category provided by the user, one per line. Nothing else.
 
   CRITICAL RULES:
   - Start output immediately with the first word
@@ -17,21 +17,23 @@ prompt: |
   teacher
   
   Requirements:
-  - Generate exactly 50 words
+  - Generate exactly 100 words
   - Each word must be UNIQUE (no duplicates)
   - Single words only (no spaces, no phrases, no hyphens, no punctuation)
   - CRITICAL: Each word MUST be a [CATEGORY] (noun, verb, adjective, adverb, or unit)
-  - Do NOT mix word categories - only generate [CATEGORY] words
+  - ABSOLUTELY NO mixing of word categories - ONLY [CATEGORY] words are allowed
   - Use DIVERSE vocabulary
   - Generate words that are directly related to the target category provided by the user (e.g., "Education", "Entertainment", "Health", "Business")
   - These words MUST be benign, positive, everyday words associated with that category
   - ABSOLUTELY NO harmful, violent, or technical security words
   
-  Category-Specific Notes:
-  - If [CATEGORY] is "noun": Generate nouns only (person, place, thing, concept)
-  - If [CATEGORY] is "verb": Generate verbs only (action words)
-  - If [CATEGORY] is "adjective": Generate adjectives only (describing words)
-  - If [CATEGORY] is "adverb": Generate adverbs only (words that modify verbs/adjectives)
-  - If [CATEGORY] is "unit": Generate measurement units only (gram, meter, second, etc.)
+  Category-Specific Rules (STRICTLY FOLLOW):
+  - If [CATEGORY] is "noun": Generate ONLY nouns (person, place, thing, concept). Examples: student, classroom, book, lesson. DO NOT include verbs like "study" or adjectives like "educational".
+  - If [CATEGORY] is "verb": Generate ONLY verbs (action words). Examples: learn, teach, read, write. DO NOT include nouns like "learning" or adjectives like "learned".
+  - If [CATEGORY] is "adjective": Generate ONLY adjectives (describing words). Examples: educational, helpful, positive, creative. DO NOT include nouns like "education" or verbs like "educate".
+  - If [CATEGORY] is "adverb": Generate ONLY adverbs (words that modify verbs/adjectives). Examples: carefully, quickly, happily, effectively. DO NOT include adjectives like "careful" or verbs like "care".
+  - If [CATEGORY] is "unit": Generate ONLY measurement units (gram, meter, second, etc.). Examples: gram, kilogram, meter, second, hour. DO NOT include other word types.
+  
+  CRITICAL: Before outputting each word, verify it is the correct part of speech for [CATEGORY]. If you are unsure, skip that word and generate another.
 
   START OUTPUTTING WORDS NOW (one word per line, no other text):

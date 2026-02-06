@@ -4,6 +4,7 @@ Attack pipeline execution and result management.
 import csv
 import json
 import os
+import time
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
@@ -11,6 +12,19 @@ from src.llm import generate_dictionary, attack_target_llm
 from src.word import convert_query, reverse_convert
 from src.utils.logger import log, close_log_file
 from model import ModelFactory, LLMClient
+
+
+def _format_time(seconds):
+    """Format seconds into human-readable time string."""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    if hours > 0:
+        return f"{hours}h {minutes}m {secs}s"
+    elif minutes > 0:
+        return f"{minutes}m {secs}s"
+    else:
+        return f"{secs}s"
 
 
 def create_result_dict(
@@ -137,6 +151,12 @@ def attack_single_query(
         reversed_response = reverse_convert(target_response, dictionary)
         log(f"[Task {task_num}][{benign_category}] ✓ Response reversed", log_file=log_file)
         
+        # Log original prompt and reversed response preview
+        log(f"[Task {task_num}][{benign_category}] Original prompt: {harmful_query}", log_file=log_file)
+        reversed_words = reversed_response.split()[:30]
+        reversed_preview = " ".join(reversed_words)
+        log(f"[Task {task_num}][{benign_category}] Reversed response: {reversed_preview}...", log_file=log_file)
+        
         return create_result_dict(
             task_num=task_num,
             original_query=harmful_query,
@@ -177,13 +197,13 @@ def run_attack_pipeline(
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
     if output_file is None:
-        output_file = f"results/result_{timestamp}.json"
+        output_file = f"results/results_{timestamp}.json"
     
-    log_file = f"results/log_{timestamp}.log"
+    log_file = f"results/logs/log_{timestamp}.log"
     
-    log("=" * 80, log_file=log_file)
+    log("=" * 100, log_file=log_file)
     log("Starting Target LLM Attack Pipeline", log_file=log_file)
-    log("=" * 80, log_file=log_file)
+    log("=" * 100, log_file=log_file)
     log(f"Categories to test: {categories}", log_file=log_file)
     if limit:
         log(f"Limit: {limit} queries", log_file=log_file)
@@ -213,6 +233,7 @@ def run_attack_pipeline(
         raise
     
     all_results = []
+    start_time = time.time()
     
     try:
         for query_data in queries:
@@ -220,10 +241,12 @@ def run_attack_pipeline(
             harmful_query = query_data['original_query']
             original_category = query_data['original_category']
             
+            task_start_time = time.time()
+            
             log("", log_file=log_file)
-            log("-" * 80, log_file=log_file)
+            log("=" * 100, log_file=log_file)
             log(f"Task {task_num}/{len(queries)}: {harmful_query}", log_file=log_file)
-            log("-" * 80, log_file=log_file)
+            log("=" * 100, log_file=log_file)
             
             task_dict_dir = os.path.join(dictionary_base_dir, f"task{task_num}")
             os.makedirs(task_dict_dir, exist_ok=True)
@@ -243,7 +266,11 @@ def run_attack_pipeline(
                 )
                 
                 all_results.append(result)
+                log("-" * 100, log_file=log_file)
             
+            task_elapsed = time.time() - task_start_time
+            log(f"[Task {task_num}] Completed in {_format_time(task_elapsed)}", log_file=log_file)
+                        
             if task_num % 10 == 0 or task_num == len(queries):
                 log(f"[Task {task_num}] Saving intermediate results...", log_file=log_file)
                 save_results(all_results, output_file)
@@ -255,6 +282,8 @@ def run_attack_pipeline(
         result_file = save_results(all_results, output_file)
         log(f"✓ Final results saved to: {result_file}", log_file=log_file)
         
+        total_time = time.time() - start_time
+        
         log("", log_file=log_file)
         log("=" * 80, log_file=log_file)
         log("Attack Summary", log_file=log_file)
@@ -262,6 +291,7 @@ def run_attack_pipeline(
         log(f"Total tasks processed: {len(queries)}", log_file=log_file)
         log(f"Total results: {len(all_results)}", log_file=log_file)
         log(f"Expected results: {len(queries) * len(categories)}", log_file=log_file)
+        log(f"Total time elapsed: {_format_time(total_time)}", log_file=log_file)
         log(f"Results file: {result_file}", log_file=log_file)
         log(f"Log file: {log_file}", log_file=log_file)
         log("", log_file=log_file)
