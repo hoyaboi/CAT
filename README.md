@@ -1,6 +1,4 @@
-# CAT (Contextual Alignment Transformation)
-
-## Project Overview
+# CAT: Contextual Alignment Transformation
 
 CAT is an adversarial attack framework that uses contextual word substitution to bypass safety filters in Large Language Models (LLMs). The framework generates word substitution dictionaries by mapping harmful words to benign alternatives within specific contextual categories (Education, Entertainment, Health, Business), then uses these dictionaries to transform harmful queries and evaluate the effectiveness of the attack.
 
