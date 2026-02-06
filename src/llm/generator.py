@@ -264,6 +264,7 @@ def _create_user_prompt(
         if key_words and len(key_words) > 0:
             key_words_list = ", ".join(sorted(list(key_words))[:10])
             prompt_parts.append(f"\nKey words to include: {key_words_list}")
+            prompt_parts.append(f"\nNote: Only include words that match the {category} part of speech.")
         
         # Add existing words if any
         if existing_words:
