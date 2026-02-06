@@ -8,7 +8,7 @@ import time
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
-from src.llm import generate_dictionary, attack_target_llm
+from src.llm import generate_dictionary, attack_target_llm, evaluate_response
 from src.word import convert_query, reverse_convert
 from src.utils.logger import log, close_log_file
 from model import ModelFactory, LLMClient
@@ -36,6 +36,7 @@ def create_result_dict(
     target_response: Optional[str],
     reversed_response: Optional[str],
     success: bool = False,
+    score: Optional[float] = None,
     error: Optional[str] = None
 ) -> Dict[str, Any]:
     """Create a standardized result dictionary."""
@@ -49,6 +50,9 @@ def create_result_dict(
         "reversed_response": reversed_response,
         "success": success
     }
+    
+    if score is not None:
+        result["score"] = score
     
     if error:
         result["error"] = error
@@ -81,6 +85,9 @@ def save_results(all_results: List[Dict[str, Any]], output_file: str = "results/
             "reversed_response": result.get('reversed_response'),
             "success": result.get('success', False)
         }
+        
+        if 'score' in result:
+            category_result['score'] = result['score']
         
         if 'error' in result:
             category_result['error'] = result['error']
@@ -120,6 +127,7 @@ def attack_single_query(
     benign_category: str,
     word_llm_client: LLMClient,
     target_llm_client: LLMClient,
+    judge_llm_client: LLMClient,
     dictionary_dir: str = "results/dictionaries",
     log_file: Optional[str] = None
 ) -> Dict[str, Any]:
@@ -157,6 +165,16 @@ def attack_single_query(
         reversed_preview = " ".join(reversed_words)
         log(f"[Task {task_num}][{benign_category}] Reversed response: {reversed_preview}...", log_file=log_file)
         
+        log(f"[Task {task_num}][{benign_category}] Step 5: Evaluating response...", log_file=log_file)
+        evaluation = evaluate_response(
+            user_prompt=harmful_query,
+            agent_response=reversed_response,
+            judge_llm_client=judge_llm_client
+        )
+        score = evaluation['score']
+        success = evaluation['success']
+        log(f"[Task {task_num}][{benign_category}] ✓ Evaluation completed (Score: {score:.3f}, {'Success' if success else 'Failed'})", log_file=log_file)
+        
         return create_result_dict(
             task_num=task_num,
             original_query=harmful_query,
@@ -165,7 +183,8 @@ def attack_single_query(
             converted_query=converted_query,
             target_response=target_response,
             reversed_response=reversed_response,
-            success=False
+            success=success,
+            score=score
         )
         
     except Exception as e:
@@ -266,6 +285,7 @@ def run_attack_pipeline(
                     benign_category=benign_category,
                     word_llm_client=word_llm,
                     target_llm_client=target_llm,
+                    judge_llm_client=judge_llm,
                     dictionary_dir=task_dict_dir,
                     log_file=log_file
                 )
@@ -289,11 +309,18 @@ def run_attack_pipeline(
         
         total_time = time.time() - start_time
         
+        # Calculate success statistics (task-level: if any category succeeds, task succeeds)
+        successful_tasks = set()
+        for result in all_results:
+            if result.get('success', False):
+                successful_tasks.add(result['task'])
+        
         log("", log_file=log_file)
         log("=" * 80, log_file=log_file)
         log("Attack Summary", log_file=log_file)
         log("=" * 80, log_file=log_file)
         log(f"Total tasks processed: {len(queries)}", log_file=log_file)
+        log(f"Successful tasks: {len(successful_tasks)}/{len(queries)}", log_file=log_file)
         log(f"Total results: {len(all_results)}", log_file=log_file)
         log(f"Expected results: {len(queries) * len(categories)}", log_file=log_file)
         log(f"Total time elapsed: {_format_time(total_time)}", log_file=log_file)
