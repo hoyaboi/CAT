@@ -265,9 +265,9 @@ def run_attack_pipeline(
         close_log_file()
         raise
     
-    log(f"Word LLM model: {word_model or 'default (gpt-4o-mini)'}", log_file=log_file)
-    log(f"Target LLM model: {target_model or 'default (gpt-4o-mini)'}", log_file=log_file)
-    log(f"Judge LLM model: {judge_model or 'default (gpt-4o-mini)'}", log_file=log_file)
+    log(f"Word LLM model: {word_model or 'gpt-4o-mini'}", log_file=log_file)
+    log(f"Target LLM model: {target_model or 'gpt-4o-mini'}", log_file=log_file)
+    log(f"Judge LLM model: {judge_model or 'gpt-4o-mini'}", log_file=log_file)
     try:
         word_llm = ModelFactory.create_word_llm(word_model)
         target_llm = ModelFactory.create_target_llm(target_model)
