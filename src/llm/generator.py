@@ -27,10 +27,8 @@ except LookupError:
         nltk.download('averaged_perceptron_tagger_eng', quiet=True)
 
 
-HARMFUL_PROMPT_PATH = Path("prompts/word_harmful_llm_system.yaml")
-BENIGN_PROMPT_PATH = Path("prompts/word_benign_llm_system.yaml")
-WORDS_PER_GENERATION = 100
-MAX_ATTEMPTS = 10
+WORD_PROMPT_PATH = Path("prompts/word_llm_system.yaml")
+MAX_ATTEMPTS = 5
 VALID_CATEGORIES = {'noun', 'verb', 'adjective', 'adverb', 'unit'}
 
 
@@ -162,7 +160,7 @@ def _generate_category_words_with_retry(
     list_type: str,
     key_words: Optional[Set[str]] = None
 ) -> List[str]:
-    """Generate words for a category by generating 100 words at a time until we have enough."""
+    """Generate words for a category by generating 2x expected_count words at a time until we have enough."""
     category_words = []
     seen_words = set()
     attempt = 0
@@ -180,6 +178,9 @@ def _generate_category_words_with_retry(
     while len(category_words) < expected_count and attempt < MAX_ATTEMPTS:
         attempt += 1
         
+        # Calculate how many words to generate: 2x the expected count
+        words_to_generate = expected_count * 2
+        
         response = _call_llm_for_words(
             context=context,
             category=category,
@@ -188,7 +189,8 @@ def _generate_category_words_with_retry(
             task_num=task_num,
             output_dir=output_dir,
             list_type=list_type,
-            key_words=key_words
+            key_words=key_words,
+            word_count=words_to_generate
         )
         
         parsed_words = _parse_word_list(response, category)
@@ -216,10 +218,11 @@ def _call_llm_for_words(
     task_num: Optional[int],
     output_dir: str,
     list_type: str,
-    key_words: Optional[Set[str]] = None
+    key_words: Optional[Set[str]] = None,
+    word_count: int = 100
 ) -> str:
-    """Call LLM to generate 100 words for a category."""
-    system_prompt = _load_and_prepare_prompt(category, list_type)
+    """Call LLM to generate words for a category."""
+    system_prompt = _load_and_prepare_prompt(category, list_type, word_count)
     user_prompt = _create_user_prompt(context, category, existing_words, list_type, key_words)
     
     response = word_llm_client.call(
@@ -232,18 +235,20 @@ def _call_llm_for_words(
     return response
 
 
-def _load_and_prepare_prompt(category: str, list_type: str) -> str:
-    """Load prompt template based on list_type and replace placeholders."""
-    prompt_path = HARMFUL_PROMPT_PATH if list_type == "harmful" else BENIGN_PROMPT_PATH
+def _load_and_prepare_prompt(category: str, list_type: str, word_count: int = 100) -> str:
+    """Load prompt template and replace placeholders."""
+    if not WORD_PROMPT_PATH.exists():
+        raise FileNotFoundError(f"Prompt file not found: {WORD_PROMPT_PATH}")
     
-    if not prompt_path.exists():
-        raise FileNotFoundError(f"Prompt file not found: {prompt_path}")
-    
-    with open(prompt_path, 'r', encoding='utf-8') as f:
+    with open(WORD_PROMPT_PATH, 'r', encoding='utf-8') as f:
         prompt_config = yaml.safe_load(f)
         template = prompt_config['prompt']
     
-    return template.replace("[CATEGORY]", category)
+    # Replace placeholders
+    template = template.replace("[CATEGORY]", category)
+    template = template.replace("[WORD_COUNT]", str(word_count))
+    
+    return template
 
 
 def _create_user_prompt(

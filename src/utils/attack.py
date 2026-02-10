@@ -60,7 +60,12 @@ def create_result_dict(
     return result
 
 
-def save_results(all_results: List[Dict[str, Any]], output_file: str = "results/attack_results.json", log_file: Optional[str] = None) -> str:
+def save_results(
+    all_results: List[Dict[str, Any]], 
+    output_file: str = "results/attack_results.json", 
+    log_file: Optional[str] = None,
+    summary: Optional[Dict[str, Any]] = None
+) -> str:
     """Save all attack results grouped by task. Appends to existing file if it exists."""
     output_dir = os.path.dirname(output_file)
     if output_dir:
@@ -68,13 +73,23 @@ def save_results(all_results: List[Dict[str, Any]], output_file: str = "results/
     
     # Load existing results if file exists
     existing_tasks_dict = {}
+    existing_summary = None
     if os.path.exists(output_file):
         try:
             with open(output_file, 'r', encoding='utf-8') as f:
-                existing_tasks_list = json.load(f)
-                for task_data in existing_tasks_list:
-                    task_num = task_data['task']
-                    existing_tasks_dict[task_num] = task_data
+                data = json.load(f)
+                # Check if it's the new format with summary
+                if isinstance(data, dict) and 'tasks' in data:
+                    existing_summary = data.get('summary')
+                    tasks_list = data['tasks']
+                else:
+                    # Old format: just a list of tasks
+                    tasks_list = data
+                
+                for task_data in tasks_list:
+                    if isinstance(task_data, dict) and 'task' in task_data:
+                        task_num = task_data['task']
+                        existing_tasks_dict[task_num] = task_data
         except (json.JSONDecodeError, KeyError) as e:
             # If file is corrupted, start fresh
             log(f"Warning: Could not read existing results file: {e}. Starting fresh.", log_file=log_file)
@@ -118,8 +133,18 @@ def save_results(all_results: List[Dict[str, Any]], output_file: str = "results/
     
     tasks_list = [tasks_dict[task_num] for task_num in sorted(tasks_dict)]
     
+    # Prepare output data
+    if summary:
+        output_data = {
+            "summary": summary,
+            "tasks": tasks_list
+        }
+    else:
+        # If no summary provided, keep old format for backward compatibility
+        output_data = tasks_list
+    
     with open(output_file, 'w', encoding='utf-8') as f:
-        json.dump(tasks_list, f, indent=2, ensure_ascii=False)
+        json.dump(output_data, f, indent=2, ensure_ascii=False)
     
     return output_file
 
@@ -314,6 +339,11 @@ def run_attack_pipeline(
                 
                 all_results.append(result)
                 log("-" * 100, log_file=log_file)
+                
+                # Early stop if attack succeeded
+                if result.get('success', False):
+                    log(f"[Task {task_num}] ✓ Attack succeeded with category '{benign_category}'. Stopping early.", log_file=log_file)
+                    break
             
             task_elapsed = time.time() - task_start_time
             log(f"[Task {task_num}] Completed in {_format_time(task_elapsed)}", log_file=log_file)
@@ -325,9 +355,6 @@ def run_attack_pipeline(
         
         log("", log_file=log_file)
         log("=" * 80, log_file=log_file)
-        # Results are already saved after each task, but ensure final save
-        result_file = save_results(all_results, output_file, log_file=log_file)
-        log(f"✓ Final results saved to: {result_file}", log_file=log_file)
         
         total_time = time.time() - start_time
         
@@ -337,15 +364,28 @@ def run_attack_pipeline(
             if result.get('success', False):
                 successful_tasks.add(result['task'])
         
+        # Prepare summary
+        summary = {
+            "total_tasks": len(queries),
+            "successful_tasks": len(successful_tasks),
+            "success_rate": len(successful_tasks) / len(queries) if len(queries) > 0 else 0.0,
+            "total_time_seconds": total_time,
+            "total_time_formatted": _format_time(total_time),
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        # Save final results with summary
+        result_file = save_results(all_results, output_file, log_file=log_file, summary=summary)
+        log(f"✓ Final results saved to: {result_file}", log_file=log_file)
+        
         log("", log_file=log_file)
         log("=" * 80, log_file=log_file)
         log("Attack Summary", log_file=log_file)
         log("=" * 80, log_file=log_file)
         log(f"Total tasks processed: {len(queries)}", log_file=log_file)
         log(f"Successful tasks: {len(successful_tasks)}/{len(queries)}", log_file=log_file)
-        log(f"Total results: {len(all_results)}", log_file=log_file)
-        log(f"Expected results: {len(queries) * len(categories)}", log_file=log_file)
-        log(f"Total time elapsed: {_format_time(total_time)}", log_file=log_file)
+        log(f"Success rate: {summary['success_rate']:.2%}", log_file=log_file)
+        log(f"Total time elapsed: {summary['total_time_formatted']}", log_file=log_file)
         log(f"Results file: {result_file}", log_file=log_file)
         log(f"Log file: {log_file}", log_file=log_file)
         log("", log_file=log_file)
