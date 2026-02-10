@@ -4,8 +4,8 @@ Main entry point for CAT attack pipeline.
 import argparse
 from src.utils import run_attack_pipeline
 
-# Default categories
-CATEGORIES = ["Education", "Entertainment", "Health", "Business"]
+# Default strategies
+STRATEGIES = ["Education", "Entertainment", "Health", "Business", "Technology"]
 
 
 def main():
@@ -51,7 +51,7 @@ def main():
     args = parser.parse_args()
     
     run_attack_pipeline(
-        categories=CATEGORIES,
+        strategies=STRATEGIES,
         word_model=args.word_model,
         target_model=args.target_model,
         judge_model=args.judge_model,

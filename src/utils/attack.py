@@ -176,9 +176,16 @@ def attack_single_query(
     target_llm_client: LLMClient,
     judge_llm_client: LLMClient,
     dictionary_dir: str = "results/dictionaries",
-    log_file: Optional[str] = None
+    log_file: Optional[str] = None,
+    harmful_words: Optional[Dict[str, List[str]]] = None
 ) -> Dict[str, Any]:
-    """Execute attack for a single query-category pair."""
+    """
+    Execute attack for a single query-category pair.
+    
+    Args:
+        harmful_words: Optional pre-generated harmful words. If provided, will be reused
+                      instead of generating new ones.
+    """
     try:
         log(f"[Task {task_num}][{benign_category}] Step 1: Generating dictionary...", log_file=log_file)
         dictionary = generate_dictionary(
@@ -186,7 +193,8 @@ def attack_single_query(
             target_category=benign_category,
             word_llm_client=word_llm_client,
             output_dir=dictionary_dir,
-            task_num=task_num
+            task_num=task_num,
+            harmful_words=harmful_words
         )
         log(f"[Task {task_num}][{benign_category}] ✓ Dictionary generated", log_file=log_file)
         
@@ -253,7 +261,7 @@ def attack_single_query(
 
 
 def run_attack_pipeline(
-    categories: List[str],
+    strategies: List[str],
     word_model: Optional[str] = None,
     target_model: Optional[str] = None,
     judge_model: Optional[str] = None,
@@ -272,7 +280,7 @@ def run_attack_pipeline(
     log("=" * 100, log_file=log_file)
     log("Starting Target LLM Attack Pipeline", log_file=log_file)
     log("=" * 100, log_file=log_file)
-    log(f"Categories to test: {categories}", log_file=log_file)
+    log(f"Strategies to test: {strategies}", log_file=log_file)
     if limit:
         log(f"Limit: {limit} queries", log_file=log_file)
     log(f"Log file: {log_file}", log_file=log_file)
@@ -322,19 +330,42 @@ def run_attack_pipeline(
             task_dict_dir = os.path.join(dictionary_base_dir, f"task{task_num}")
             os.makedirs(task_dict_dir, exist_ok=True)
             
-            for benign_category in categories:
-                log(f"[Task {task_num}] Testing category: {benign_category}", log_file=log_file)
+            # Generate harmful words once for this task (reused across all strategies)
+            log(f"[Task {task_num}] Generating harmful words (shared across all strategies)...", log_file=log_file)
+            from src.llm.generator import _extract_keywords_from_query, _generate_word_list
+            key_words = _extract_keywords_from_query(harmful_query)
+            
+            # Create strategy string from all extracted keywords
+            all_keywords = set()
+            for category_keywords in key_words.values():
+                all_keywords.update(category_keywords)
+            harmful_strategy = ", ".join(sorted(list(all_keywords))[:20]) if all_keywords else "general technical terms"
+            
+            harmful_words = _generate_word_list(
+                context="",  # Empty context - strategy is in system prompt
+                word_llm_client=word_llm,
+                task_num=task_num,
+                output_dir=task_dict_dir,
+                list_type="harmful",
+                key_words=key_words,
+                strategy=harmful_strategy
+            )
+            log(f"[Task {task_num}] ✓ Harmful words generated (will be reused for all strategies)", log_file=log_file)
+            
+            for strategy in strategies:
+                log(f"[Task {task_num}] Testing strategy: {strategy}", log_file=log_file)
                 
                 result = attack_single_query(
                     task_num=task_num,
                     harmful_query=harmful_query,
                     original_category=original_category,
-                    benign_category=benign_category,
+                    benign_category=strategy,
                     word_llm_client=word_llm,
                     target_llm_client=target_llm,
                     judge_llm_client=judge_llm,
                     dictionary_dir=task_dict_dir,
-                    log_file=log_file
+                    log_file=log_file,
+                    harmful_words=harmful_words
                 )
                 
                 all_results.append(result)
@@ -342,7 +373,7 @@ def run_attack_pipeline(
                 
                 # Early stop if attack succeeded
                 if result.get('success', False):
-                    log(f"[Task {task_num}] ✓ Attack succeeded with category '{benign_category}'. Stopping early.", log_file=log_file)
+                    log(f"[Task {task_num}] ✓ Attack succeeded with strategy '{strategy}'. Stopping early.", log_file=log_file)
                     break
             
             task_elapsed = time.time() - task_start_time
@@ -371,7 +402,12 @@ def run_attack_pipeline(
             "success_rate": len(successful_tasks) / len(queries) if len(queries) > 0 else 0.0,
             "total_time_seconds": total_time,
             "total_time_formatted": _format_time(total_time),
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
+            "models": {
+                "word_llm": word_model or "gpt-4o-mini",
+                "target_llm": target_model or "gpt-4o-mini",
+                "judge_llm": judge_model or "gpt-4o-mini"
+            }
         }
         
         # Save final results with summary
@@ -379,9 +415,9 @@ def run_attack_pipeline(
         log(f"✓ Final results saved to: {result_file}", log_file=log_file)
         
         log("", log_file=log_file)
-        log("=" * 80, log_file=log_file)
+        log("=" * 100, log_file=log_file)
         log("Attack Summary", log_file=log_file)
-        log("=" * 80, log_file=log_file)
+        log("=" * 100, log_file=log_file)
         log(f"Total tasks processed: {len(queries)}", log_file=log_file)
         log(f"Successful tasks: {len(successful_tasks)}/{len(queries)}", log_file=log_file)
         log(f"Success rate: {summary['success_rate']:.2%}", log_file=log_file)

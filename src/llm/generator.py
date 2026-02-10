@@ -29,7 +29,7 @@ except LookupError:
 
 WORD_PROMPT_PATH = Path("prompts/word_llm_system.yaml")
 MAX_ATTEMPTS = 5
-VALID_CATEGORIES = {'noun', 'verb', 'adjective', 'adverb', 'unit'}
+VALID_CATEGORIES = {'noun', 'verb', 'adjective', 'adverb'}
 
 
 def _extract_keywords_from_query(query: str) -> Dict[str, Set[str]]:
@@ -46,8 +46,7 @@ def _extract_keywords_from_query(query: str) -> Dict[str, Set[str]]:
         'noun': set(),
         'verb': set(),
         'adjective': set(),
-        'adverb': set(),
-        'unit': set()
+        'adverb': set()
     }
     
     # Tokenize and tag
@@ -88,30 +87,56 @@ def generate_dictionary(
     target_category: str,
     word_llm_client: Optional[LLMClient] = None,
     output_dir: str = "results/dictionaries",
-    task_num: Optional[int] = None
+    task_num: Optional[int] = None,
+    harmful_words: Optional[Dict[str, List[str]]] = None
 ) -> Dictionary:
-    """Generate word substitution dictionary using Word LLM."""
+    """
+    Generate word substitution dictionary using Word LLM.
+    
+    Args:
+        harmful_query: The harmful query string (used only for keyword extraction, not passed to LLM)
+        target_category: Target benign category/strategy (e.g., "Education", "Health")
+        word_llm_client: LLM client for word generation
+        output_dir: Directory to save dictionary files
+        task_num: Task number for file naming
+        harmful_words: Optional pre-generated harmful words dict. If provided, 
+                      will reuse instead of generating new ones.
+    
+    Returns:
+        Dictionary instance with word mappings
+    """
     if word_llm_client is None:
         word_llm_client = ModelFactory.create_word_llm()
     
-    # Extract key words from harmful query
-    key_words = _extract_keywords_from_query(harmful_query)
+    # Generate harmful words only if not provided
+    if harmful_words is None:
+        # Extract key words from harmful query (these become the strategy)
+        key_words = _extract_keywords_from_query(harmful_query)
+        
+        # Create strategy string from all extracted keywords
+        all_keywords = set()
+        for category_keywords in key_words.values():
+            all_keywords.update(category_keywords)
+        harmful_strategy = ", ".join(sorted(list(all_keywords))[:20]) if all_keywords else "general technical terms"
+        
+        harmful_words = _generate_word_list(
+            context="",  # Empty context - strategy is in system prompt
+            word_llm_client=word_llm_client,
+            task_num=task_num,
+            output_dir=output_dir,
+            list_type="harmful",
+            key_words=key_words,
+            strategy=harmful_strategy
+        )
     
-    harmful_words = _generate_word_list(
-        context=harmful_query,
-        word_llm_client=word_llm_client,
-        task_num=task_num,
-        output_dir=output_dir,
-        list_type="harmful",
-        key_words=key_words
-    )
-    
+    # Always generate benign words for the target category (strategy)
     benign_words = _generate_word_list(
-        context=target_category,
+        context="",  # Empty context - strategy is in system prompt
         word_llm_client=word_llm_client,
         task_num=task_num,
         output_dir=output_dir,
-        list_type="benign"
+        list_type="benign",
+        strategy=target_category
     )
     
     all_mappings = _match_word_lists(harmful_words, benign_words)
@@ -128,7 +153,8 @@ def _generate_word_list(
     task_num: Optional[int],
     output_dir: str,
     list_type: str,
-    key_words: Optional[Dict[str, Set[str]]] = None
+    key_words: Optional[Dict[str, Set[str]]] = None,
+    strategy: str = ""
 ) -> Dict[str, List[str]]:
     """Generate a list of words (harmful or benign) organized by category."""
     all_words: Dict[str, List[str]] = {}
@@ -143,7 +169,8 @@ def _generate_word_list(
             task_num=task_num,
             output_dir=output_dir,
             list_type=list_type,
-            key_words=category_keywords
+            key_words=category_keywords,
+            strategy=strategy
         )
         all_words[category] = category_words
     
@@ -158,7 +185,8 @@ def _generate_category_words_with_retry(
     task_num: Optional[int],
     output_dir: str,
     list_type: str,
-    key_words: Optional[Set[str]] = None
+    key_words: Optional[Set[str]] = None,
+    strategy: str = ""
 ) -> List[str]:
     """Generate words for a category by generating 2x expected_count words at a time until we have enough."""
     category_words = []
@@ -190,7 +218,8 @@ def _generate_category_words_with_retry(
             output_dir=output_dir,
             list_type=list_type,
             key_words=key_words,
-            word_count=words_to_generate
+            word_count=words_to_generate,
+            strategy=strategy
         )
         
         parsed_words = _parse_word_list(response, category)
@@ -219,10 +248,11 @@ def _call_llm_for_words(
     output_dir: str,
     list_type: str,
     key_words: Optional[Set[str]] = None,
-    word_count: int = 100
+    word_count: int = 100,
+    strategy: str = ""
 ) -> str:
     """Call LLM to generate words for a category."""
-    system_prompt = _load_and_prepare_prompt(category, list_type, word_count)
+    system_prompt = _load_and_prepare_prompt(category, list_type, word_count, strategy)
     user_prompt = _create_user_prompt(context, category, existing_words, list_type, key_words)
     
     response = word_llm_client.call(
@@ -235,7 +265,7 @@ def _call_llm_for_words(
     return response
 
 
-def _load_and_prepare_prompt(category: str, list_type: str, word_count: int = 100) -> str:
+def _load_and_prepare_prompt(category: str, list_type: str, word_count: int = 100, strategy: str = "") -> str:
     """Load prompt template and replace placeholders."""
     if not WORD_PROMPT_PATH.exists():
         raise FileNotFoundError(f"Prompt file not found: {WORD_PROMPT_PATH}")
@@ -247,6 +277,7 @@ def _load_and_prepare_prompt(category: str, list_type: str, word_count: int = 10
     # Replace placeholders
     template = template.replace("[CATEGORY]", category)
     template = template.replace("[WORD_COUNT]", str(word_count))
+    template = template.replace("[STRATEGY]", strategy)
     
     return template
 
@@ -262,29 +293,31 @@ def _create_user_prompt(
     existing_list = ", ".join(list(existing_words)[:20]) if existing_words else "None"
     
     if list_type == "harmful":
-        # Build simple user prompt with just essential information
-        prompt_parts = [context]
+        # For harmful words: DO NOT include original query, only key words
+        prompt_parts = []
         
-        # Add key words if available
+        # Add key words if available (these are the strategy keywords)
         if key_words and len(key_words) > 0:
             key_words_list = ", ".join(sorted(list(key_words))[:10])
-            prompt_parts.append(f"\nKey words to include: {key_words_list}")
-            prompt_parts.append(f"\nNote: Only include words that match the {category} part of speech.")
+            prompt_parts.append(f"Key words to include: {key_words_list}")
+        else:
+            # If no key words, provide minimal instruction
+            prompt_parts.append("Generate words related to the strategy provided in the system prompt.")
         
         # Add existing words if any
         if existing_words:
-            prompt_parts.append(f"\nAlready generated: {existing_list}")
+            prompt_parts.append(f"Already generated: {existing_list}")
         
-        return "\n".join(prompt_parts)
+        return "\n".join(prompt_parts) if prompt_parts else "Generate words now."
     else:
-        # Build simple user prompt for benign words
-        prompt_parts = [context]
+        # For benign words: strategy is already in system prompt, minimal user prompt
+        prompt_parts = []
         
         # Add existing words if any
         if existing_words:
-            prompt_parts.append(f"\nAlready generated: {existing_list}")
+            prompt_parts.append(f"Already generated: {existing_list}")
         
-        return "\n".join(prompt_parts)
+        return "\n".join(prompt_parts) if prompt_parts else "Generate words now."
 
 
 def _parse_word_list(response: str, category: str) -> List[str]:
