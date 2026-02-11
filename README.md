@@ -7,6 +7,8 @@ The attack pipeline consists of three main LLM components:
 - **Target LLM**: The victim model being attacked
 - **Judge LLM**: Evaluates attack success based on relevance, concreteness, and harmfulness scores
 
+![CAT Framework](cat_framework.png)
+
 ## Installation & Quick Start
 
 1. Install dependencies:
