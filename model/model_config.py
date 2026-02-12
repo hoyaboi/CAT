@@ -96,7 +96,7 @@ AVAILABLE_MODELS = {
         api_key_env="OPENAI_API_KEY"
     ),
     
-    # Meta Llama Models (HuggingFace)
+    # Llama Models (HuggingFace)
     "llama-2-7b": ModelConfig(
         name="LLaMA-2-7b",
         model_type="huggingface",
@@ -119,6 +119,32 @@ AVAILABLE_MODELS = {
         name="LLaMA-3-70b",
         model_type="huggingface",
         deployment_name="meta-llama/Meta-Llama-3-70B-Instruct",
+        api_key_env="HUGGINGFACE_TOKEN"
+    ),
+    
+    # Qwen Models (HuggingFace)
+    "qwen2.5-7b": ModelConfig(
+        name="Qwen2.5-7B",
+        model_type="huggingface",
+        deployment_name="Qwen/Qwen2.5-7B-Instruct",
+        api_key_env="HUGGINGFACE_TOKEN"
+    ),
+    "qwen2.5-14b": ModelConfig(
+        name="Qwen2.5-14B",
+        model_type="huggingface",
+        deployment_name="Qwen/Qwen2.5-14B-Instruct",
+        api_key_env="HUGGINGFACE_TOKEN"
+    ),
+    "qwen2.5-32b": ModelConfig(
+        name="Qwen2.5-32B",
+        model_type="huggingface",
+        deployment_name="Qwen/Qwen2.5-32B-Instruct",
+        api_key_env="HUGGINGFACE_TOKEN"
+    ),
+    "qwen2.5-72b": ModelConfig(
+        name="Qwen2.5-72B",
+        model_type="huggingface",
+        deployment_name="Qwen/Qwen2.5-72B-Instruct",
         api_key_env="HUGGINGFACE_TOKEN"
     ),
 }
