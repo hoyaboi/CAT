@@ -23,6 +23,7 @@ The attack pipeline consists of three main LLM components:
    # .env file
    OPENAI_API_KEY=your-openai-api-key
    HUGGINGFACE_TOKEN=your-huggingface-token
+   GOOGLE_API_KEY=your-google-api-key
    ```
    
    Note: The `.env` file is already included in `.gitignore` to keep your keys secure.
@@ -74,6 +75,9 @@ The framework supports both OpenAI and HuggingFace models:
 - `qwen2.5-14b`: Qwen2.5 14B Instruct
 - `qwen2.5-32b`: Qwen2.5 32B Instruct
 - `qwen2.5-72b`: Qwen2.5 72B Instruct
+
+#### Gemini Models (Google)
+- `gemini-2.5-flash`: Gemini 2.5 Flash
 
 ## Output Format
 
