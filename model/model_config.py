@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Optional
 import os
 from dotenv import load_dotenv
-from .clients import LLMClient, OpenAIClient, HuggingFaceClient
+from .clients import LLMClient, OpenAIClient, HuggingFaceClient, GeminiClient
 
 # Load environment variables
 load_dotenv()
@@ -50,6 +50,12 @@ class ModelConfig:
                 max_new_tokens=256,
                 device_map="auto",
                 torch_dtype="float16" if self._check_cuda() else None,
+            )
+        
+        elif self.model_type == "gemini":
+            return GeminiClient(
+                model_name=self.deployment_name,
+                api_key=api_key,
             )
         
         else:
@@ -146,5 +152,13 @@ AVAILABLE_MODELS = {
         model_type="huggingface",
         deployment_name="Qwen/Qwen2.5-72B-Instruct",
         api_key_env="HUGGINGFACE_TOKEN"
+    ),
+    
+    # Gemini Models (Google)
+    "gemini-2.5-flash": ModelConfig(
+        name="Gemini 2.5 Flash",
+        model_type="gemini",
+        deployment_name="gemini-2.5-flash",
+        api_key_env="GOOGLE_API_KEY"
     ),
 }
