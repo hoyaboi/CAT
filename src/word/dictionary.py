@@ -168,6 +168,38 @@ class Dictionary:
         
         return "\n".join(lines)
     
+    def get_multi_word_originals(self) -> List[tuple]:
+        """
+        Get all (original, alternative) pairs where original is a multi-word phrase.
+        Sorted by phrase length descending for longest-match-first substitution.
+
+        Returns:
+            List of (original, alternative) tuples
+        """
+        pairs = []
+        for cat_words in self.mappings.values():
+            for original, alternative in cat_words.items():
+                if ' ' in original:
+                    pairs.append((original, alternative))
+        pairs.sort(key=lambda x: len(x[0]), reverse=True)
+        return pairs
+
+    def get_multi_word_alternatives(self) -> List[tuple]:
+        """
+        Get all (alternative, original) pairs where alternative is a multi-word phrase.
+        Sorted by phrase length descending for longest-match-first substitution.
+
+        Returns:
+            List of (alternative, original) tuples
+        """
+        pairs = []
+        for cat_words in self.mappings.values():
+            for original, alternative in cat_words.items():
+                if ' ' in alternative:
+                    pairs.append((alternative, original))
+        pairs.sort(key=lambda x: len(x[0]), reverse=True)
+        return pairs
+
     def get_all_mappings(self) -> Dict[str, Dict[str, str]]:
         """
         Get all mappings.

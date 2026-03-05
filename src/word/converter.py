@@ -95,35 +95,76 @@ def _inflect_word(base_word: str, original_word: str, pos_tag: Optional[str] = N
     """
     original_lower = original_word.lower()
     base_lower = base_word.lower()
-    
-    # If words are same length or original is shorter, return base as-is
-    if len(original_lower) <= len(base_lower):
-        return base_word
-    
-    # Simple heuristic: preserve suffix pattern
+
     # For verbs: -ed, -ing, -s endings
     if pos_tag and pos_tag.startswith('V'):
-        if original_lower.endswith('ed'):
-            return base_lower + 'ed' if not base_lower.endswith('e') else base_lower[:-1] + 'ed'
-        elif original_lower.endswith('ing'):
+        if original_lower.endswith('ing'):
             if base_lower.endswith('e'):
                 return base_lower[:-1] + 'ing'
             else:
                 return base_lower + 'ing'
+        elif original_lower.endswith('ed'):
+            # e.g. "ignite" → "ignited", "connect" → "connected"
+            if base_lower.endswith('e'):
+                return base_lower + 'd'
+            else:
+                return base_lower + 'ed'
         elif original_lower.endswith('s') and not original_lower.endswith('ss'):
-            return base_lower + 's' if not base_lower.endswith('s') else base_lower
-    
+            if not base_lower.endswith('s'):
+                return base_lower + 's'
+
     # For nouns: plural forms (-s, -es, -ies)
     if pos_tag and pos_tag.startswith('N'):
         if original_lower.endswith('ies'):
             return base_lower[:-1] + 'ies' if base_lower.endswith('y') else base_lower + 'ies'
-        elif original_lower.endswith('es'):
+        elif original_lower.endswith('es') and not base_lower.endswith('s'):
             return base_lower + 'es'
         elif original_lower.endswith('s') and not base_lower.endswith('s'):
             return base_lower + 's'
-    
-    # Default: return base word
+
+    # Default: return base word as-is
     return base_word
+
+
+def _build_multiword_inflection_pattern(phrase: str) -> re.Pattern:
+    """
+    Build a regex that matches a multi-word phrase (base form from dictionary)
+    and common inflected forms of its last word.
+
+    Supported inflections on last word:
+      - ends in 'e'  → +s (plural), +d (past), stem+ing (present participle)
+                        e.g. "nitrate" → nitrate, nitrates, nitrated, nitrating
+      - ends in 'y'  → base, stem+ies (plural)
+                        e.g. "factory" → factory, factories
+      - otherwise    → base, +s/+es (plural), +ed (past), +ing (present participle)
+                        e.g. "cap" → cap, caps; "compound" → compound, compounds,
+                                     compounded, compounding
+
+    Args:
+        phrase: Multi-word phrase in base form (as stored in dictionary)
+
+    Returns:
+        Compiled case-insensitive regex pattern
+    """
+    words = phrase.split()
+    escaped_head = [re.escape(w) for w in words[:-1]]
+    last = words[-1].lower()
+
+    if last.endswith('e'):
+        # e.g. "nitrate" → stem "nitrat" + (e, es, ed, ing)
+        stem_esc = re.escape(last[:-1])
+        last_pattern = rf'{stem_esc}(?:es?|ed|ing)'
+    elif last.endswith('y') and len(last) > 2:
+        # e.g. "factory" → factory | factories
+        stem_esc = re.escape(last[:-1])
+        last_pattern = rf'(?:{re.escape(last)}|{stem_esc}ies)'
+    else:
+        # e.g. "cap" → cap, caps; "compound" → compound, compounds, compounded, compounding
+        last_pattern = rf'{re.escape(last)}(?:s|es|ed|ing)?'
+
+    parts = escaped_head + [last_pattern]
+    pattern_str = r'\s+'.join(parts)
+    return re.compile(rf'\b{pattern_str}\b', re.IGNORECASE)
 
 
 def _tokenize_with_positions(text: str) -> List[Tuple[str, int, int, Optional[str]]]:
@@ -159,6 +200,8 @@ def _tokenize_with_positions(text: str) -> List[Tuple[str, int, int, Optional[st
 def convert_query(harmful_query: str, dictionary: Dictionary) -> str:
     """
     Convert harmful query words to alternative words.
+    Multi-word originals are replaced first (longest match first),
+    then single-word originals are substituted token by token.
     
     Args:
         harmful_query: Original harmful query (e.g., "How to make a bomb")
@@ -169,90 +212,106 @@ def convert_query(harmful_query: str, dictionary: Dictionary) -> str:
     """
     if not harmful_query.strip():
         return harmful_query
-    
-    # Tokenize with POS tags
-    tokens = _tokenize_with_positions(harmful_query)
-    
+
+    # Step 1: Replace multi-word originals first (longest match first, case-insensitive).
+    # Pattern also covers inflected forms of the last word (plurals, -ed, -ing).
+    text = harmful_query
+    for original, alternative in dictionary.get_multi_word_originals():
+        pattern = _build_multiword_inflection_pattern(original)
+        text = pattern.sub(alternative, text)
+
+    # Step 2: Tokenize and replace single-word originals
+    tokens = _tokenize_with_positions(text)
+
     result_parts = []
     last_end = 0
-    
+
     for word, start, end, pos_tag in tokens:
         # Preserve text before token
         if start > last_end:
-            result_parts.append(harmful_query[last_end:start])
-        
+            result_parts.append(text[last_end:start])
+
         # Try exact match first
         alternative = dictionary.get_alternative(word)
-        
+
         # If not found, try lemmatization
         if not alternative:
             lemma = _lemmatize_word(word, pos_tag)
             base_alternative = dictionary.get_alternative(lemma)
-            
+
             if base_alternative:
                 # Apply same inflection pattern
                 alternative = _inflect_word(base_alternative, word, pos_tag)
                 # Preserve original case
                 if word[0].isupper():
                     alternative = alternative.capitalize()
-        
+
         # Use alternative if found, otherwise keep original
         result_parts.append(alternative if alternative else word)
         last_end = end
-    
+
     # Add remaining text
-    if last_end < len(harmful_query):
-        result_parts.append(harmful_query[last_end:])
-    
+    if last_end < len(text):
+        result_parts.append(text[last_end:])
+
     return ''.join(result_parts)
 
 
 def reverse_convert(response: str, dictionary: Dictionary) -> str:
     """
     Reverse convert response from alternative words back to original words.
-    
+    Multi-word alternatives are replaced first (longest match first),
+    then single-word alternatives are substituted token by token.
+
     Args:
         response: Response with alternative words
         dictionary: Word substitution dictionary
-    
+
     Returns:
         Response with original words restored
     """
     if not response.strip():
         return response
-    
-    # Tokenize with POS tags
-    tokens = _tokenize_with_positions(response)
-    
+
+    # Step 1: Replace multi-word alternatives first (longest match first, case-insensitive).
+    # Pattern also covers inflected forms of the last word (plurals, -ed, -ing).
+    text = response
+    for alternative, original in dictionary.get_multi_word_alternatives():
+        pattern = _build_multiword_inflection_pattern(alternative)
+        text = pattern.sub(original, text)
+
+    # Step 2: Tokenize and replace single-word alternatives
+    tokens = _tokenize_with_positions(text)
+
     result_parts = []
     last_end = 0
-    
+
     for word, start, end, pos_tag in tokens:
         # Preserve text before token
         if start > last_end:
-            result_parts.append(response[last_end:start])
-        
+            result_parts.append(text[last_end:start])
+
         # Try exact match first (reverse lookup)
         original = dictionary.get_original(word)
-        
+
         # If not found, try lemmatization
         if not original:
             lemma = _lemmatize_word(word, pos_tag)
             base_original = dictionary.get_original(lemma)
-            
+
             if base_original:
                 # Apply same inflection pattern
                 original = _inflect_word(base_original, word, pos_tag)
                 # Preserve original case
                 if word[0].isupper():
                     original = original.capitalize()
-        
+
         # Use original if found, otherwise keep alternative
         result_parts.append(original if original else word)
         last_end = end
-    
+
     # Add remaining text
-    if last_end < len(response):
-        result_parts.append(response[last_end:])
-    
+    if last_end < len(text):
+        result_parts.append(text[last_end:])
+
     return ''.join(result_parts)
