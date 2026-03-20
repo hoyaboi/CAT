@@ -29,8 +29,7 @@ except LookupError:
 
 WORD_PROMPT_PATH_HARMFUL = Path("prompts/word_llm_harmful_system.yaml")
 WORD_PROMPT_PATH_BENIGN = Path("prompts/word_llm_benign_system.yaml")
-MAX_ATTEMPTS = 20          # retries per category (increased for small per-call batches)
-SINGLE_CALL_MAX = 100     # max words requested in a single LLM call
+MAX_ATTEMPTS = 5
 VALID_CATEGORIES = {'noun', 'verb', 'adjective', 'adverb'}
 
 
@@ -197,38 +196,13 @@ def _generate_category_words_with_retry(
     output_dir: str,
     list_type: str,
     key_words: Optional[Set[str]] = None,
-    strategy: str = "",
-    max_leading_word_count: int = 3,
+    strategy: str = ""
 ) -> List[str]:
-    """Generate words for a category by generating 2x expected_count words at a time until we have enough.
-
-    For harmful word lists, enforces leading-word diversity: at most
-    ``max_leading_word_count`` terms in the final list may share the same
-    first word (e.g. at most 3 terms beginning with "data").  This prevents
-    the LLM from flooding the list with "X system", "X framework", "X policy"
-    variations of the same base word.
-    """
+    """Generate words for a category by generating 2x expected_count words at a time until we have enough."""
     category_words = []
-    seen_words: set = set()
-    # Track how many accepted terms start with each leading word (harmful only)
-    leading_word_counts: Dict[str, int] = {}
+    seen_words = set()
     attempt = 0
-
-    def _leading_word(term: str) -> str:
-        return term.strip().split()[0].lower()
-
-    def _accept_word(word: str) -> bool:
-        """Return True if this word passes all acceptance criteria."""
-        word_lower = word.lower()
-        if word_lower in seen_words:
-            return False
-        # Enforce leading-word diversity for harmful lists only
-        if list_type == "harmful" and ' ' in word:
-            lw = _leading_word(word)
-            if leading_word_counts.get(lw, 0) >= max_leading_word_count:
-                return False
-        return True
-
+    
     # First, add key words at the beginning to ensure they're included in the mapping
     if key_words and list_type == "harmful":
         for key_word in sorted(key_words):  # Sort for consistency
@@ -236,21 +210,15 @@ def _generate_category_words_with_retry(
             if key_word_lower not in seen_words:
                 seen_words.add(key_word_lower)
                 category_words.append(key_word)
-                if ' ' in key_word:
-                    lw = _leading_word(key_word)
-                    leading_word_counts[lw] = leading_word_counts.get(lw, 0) + 1
                 if len(category_words) >= expected_count:
                     return category_words
-
+    
     while len(category_words) < expected_count and attempt < MAX_ATTEMPTS:
         attempt += 1
-
-        # Request only as many words as still needed, capped at SINGLE_CALL_MAX.
-        # Requesting too many at once causes the LLM to produce low-quality
-        # duplicates and off-topic variations after the first ~100 terms.
-        remaining = expected_count - len(category_words)
-        words_to_generate = min(SINGLE_CALL_MAX, remaining + 30)
-
+        
+        # Calculate how many words to generate: 2x the expected count
+        words_to_generate = expected_count * 2
+        
         response = _call_llm_for_words(
             context=context,
             category=category,
@@ -263,23 +231,21 @@ def _generate_category_words_with_retry(
             word_count=words_to_generate,
             strategy=strategy
         )
-
+        
         parsed_words = _parse_word_list(response, category)
-
+        
         for word in parsed_words:
             if len(category_words) >= expected_count:
                 break
-            if _accept_word(word):
-                seen_words.add(word.lower())
+            word_lower = word.lower()
+            if word_lower not in seen_words:
+                seen_words.add(word_lower)
                 category_words.append(word)
-                if list_type == "harmful" and ' ' in word:
-                    lw = _leading_word(word)
-                    leading_word_counts[lw] = leading_word_counts.get(lw, 0) + 1
-
+        
         # If we have enough words, return early
         if len(category_words) >= expected_count:
             return category_words
-
+    
     return category_words
 
 
@@ -388,34 +354,27 @@ def _parse_word_list(response: str, category: str) -> List[str]:
 
 
 def _extract_word_from_line(line: str) -> Optional[str]:
-    """Extract a single word or multi-word phrase from a line."""
-    if not line:
+    """Extract a single word from a line."""
+    if not line or ' ' in line:
         return None
-
+    
     line_lower = line.lower().strip()
     if line_lower.startswith(('category', 'word', 'output', 'format', 'example', 'requirements')):
         return None
-
+    
     if ':' in line:
         return None
-
-    phrase = line.strip().rstrip('.,;:!?').strip()
-
-    if not phrase:
+    
+    word = line.strip().rstrip('.,;:!?')
+    
+    if not word or not word.replace('-', '').replace('_', '').isalnum():
         return None
-
-    # Validate each token in the phrase (allows hyphens and underscores within tokens)
-    parts = phrase.split()
-    if not parts:
-        return None
-    if not all(part.replace('-', '').replace('_', '').isalnum() for part in parts):
-        return None
-
+    
     invalid_chars = ['(', ')', '[', ']', '{', '}', '=', '+', '*', '/', '\\']
-    if any(char in phrase for char in invalid_chars):
+    if any(char in word for char in invalid_chars):
         return None
-
-    return phrase
+    
+    return word
 
 
 def _match_word_lists(
